@@ -7,23 +7,16 @@ import (
 	"os"
 	"strings"
 
-	"github.com/coreos/go-systemd/sdjournal"
+	"github.com/coreos/go-systemd/v22/sdjournal"
 )
 
 var help = flag.Bool("help", false, "set to true to show this help")
-var version = flag.Bool("version", false, "set to true to show version information")
-var sha1ver string
-var buildTime string
 
 func main() {
 	flag.Parse()
 
-	if *version {
-		os.Stderr.WriteString(fmt.Sprintf("Version %s (%s) - %s\n",
-			"0.01",
-			strings.Split(":", sha1ver)[1],
-			strings.Split(":", buildTime)[1],
-		))
+	if versionFlag {
+		showVersion()
 		os.Exit(0)
 	}
 
@@ -75,7 +68,7 @@ func run(configFilename string) error {
 
 	state, err := OpenState(config.StateFilename)
 	if err != nil {
-		return fmt.Errorf("Failed to open %s: %s", config.StateFilename, err)
+		return fmt.Errorf("failed to open %s: %s", config.StateFilename, err)
 	}
 
 	lastBootId, nextSeq := state.LastState()
@@ -98,6 +91,9 @@ func run(configFilename string) error {
 	}
 
 	bootId, err := journal.GetData("_BOOT_ID")
+	if err != nil {
+		return fmt.Errorf("unable to retrieve Boot ID: %w", err)
+	}
 	bootId = bootId[9:] // Trim off "_BOOT_ID=" prefix
 
 	// If the boot id has changed since our last run then we'll start from
@@ -105,7 +101,6 @@ func run(configFilename string) error {
 	// boot id then we'll seek to the end of the stream to avoid repeating
 	// anything. However, we will miss any items that were added while we
 	// weren't running.
-	skip := uint64(0)
 	if bootId == lastBootId {
 		// If we're still in the same "boot" as we were last time then
 		// we were stopped and started again, so we'll seek to the last
@@ -113,14 +108,12 @@ func run(configFilename string) error {
 		// though we will miss any logs that were added while we were
 		// running.
 		journal.SeekTail()
-		// Skip the last item so our log will resume only when we get
-		// the *next item.
-		skip = 1
+		journal.Next()
 	}
 
 	err = state.SetState(bootId, nextSeq)
 	if err != nil {
-		return fmt.Errorf("Failed to write state: %s", err)
+		return fmt.Errorf("failed to write state: %s", err)
 	}
 
 	bufSize := config.BufferSize
@@ -128,19 +121,19 @@ func run(configFilename string) error {
 	records := make(chan Record)
 	batches := make(chan []Record)
 
-	go ReadRecords(config.EC2InstanceId, journal, records, skip)
+	go ReadRecords(config.EC2InstanceId, journal, records, 0)
 	go BatchRecords(records, batches, bufSize)
 
 	for batch := range batches {
 
 		nextSeq, err = writer.WriteBatch(batch)
 		if err != nil {
-			return fmt.Errorf("Failed to write to cloudwatch: %s", err)
+			return fmt.Errorf("failed to write to cloudwatch: %s", err)
 		}
 
 		err = state.SetState(bootId, nextSeq)
 		if err != nil {
-			return fmt.Errorf("Failed to write state: %s", err)
+			return fmt.Errorf("failed to write state: %s", err)
 		}
 
 	}
@@ -149,7 +142,7 @@ func run(configFilename string) error {
 	// Last chance to write the state.
 	err = state.SetState(bootId, nextSeq)
 	if err != nil {
-		return fmt.Errorf("Failed to write state on exit: %s", err)
+		return fmt.Errorf("failed to write state on exit: %s", err)
 	}
 
 	return nil

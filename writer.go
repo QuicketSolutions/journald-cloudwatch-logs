@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
+	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -40,7 +42,7 @@ func (w *Writer) WriteBatch(records []Record) (string, error) {
 
 		events = append(events, &cloudwatchlogs.InputLogEvent{
 			Message:   aws.String(jsonData),
-			Timestamp: aws.Int64(int64(record.TimeUsec)),
+			Timestamp: aws.Int64(record.TimeUsec / 1e3),
 		})
 	}
 
@@ -61,6 +63,14 @@ func (w *Writer) WriteBatch(records []Record) (string, error) {
 		return nil
 	}
 
+	createGroup := func() error {
+		request := &cloudwatchlogs.CreateLogGroupInput{
+			LogGroupName: &w.logGroupName,
+		}
+		_, err := w.conn.CreateLogGroup(request)
+		return err
+	}
+
 	createStream := func() error {
 		request := &cloudwatchlogs.CreateLogStreamInput{
 			LogGroupName:  &w.logGroupName,
@@ -74,10 +84,19 @@ func (w *Writer) WriteBatch(records []Record) (string, error) {
 	if err != nil {
 		if awsErr, ok := err.(awserr.Error); ok {
 			if awsErr.Code() == "ResourceNotFoundException" {
-				// Maybe our log stream doesn't exist yet. We'll try
-				// to create it and then, if we're successful, try
-				// writing the events again.
-				err := createStream()
+				// Maybe our log group or stream doesn't exist yet.
+				// We'll try to create it and then, if we're successful,
+				// try writing the events again.
+				err := createGroup()
+				if err != nil {
+					if awsErr, ok := err.(awserr.Error); ok {
+						if awsErr.Code() != "ResourceAlreadyExistsException" {
+							return "", fmt.Errorf("failed to create group: %s", err)
+						}
+					}
+				}
+
+				err = createStream()
 				if err != nil {
 					return "", fmt.Errorf("failed to create stream: %s", err)
 				}
@@ -111,6 +130,12 @@ func (w *Writer) WriteBatch(records []Record) (string, error) {
 					return "", fmt.Errorf("failed to put events: %s", err)
 				}
 				return w.nextSequenceToken, nil
+			}
+			if awsErr.Code() == "InvalidParameterException" {
+				if strings.HasPrefix(awsErr.Message(), "Log event too large") {
+					log.Println(fmt.Errorf("oversized log event: %s", err))
+					return w.nextSequenceToken, nil
+				}
 			}
 		}
 		return "", fmt.Errorf("failed to put events: %s", err)
