@@ -5,14 +5,27 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/coreos/go-systemd/sdjournal"
 )
 
 var help = flag.Bool("help", false, "set to true to show this help")
+var version = flag.Bool("version", false, "set to true to show version information")
+var sha1ver string
+var buildTime string
 
 func main() {
 	flag.Parse()
+
+	if *version {
+		os.Stderr.WriteString(fmt.Sprintf("Version %s (%s) - %s\n",
+			"0.01",
+			strings.Split(":", sha1ver)[1],
+			strings.Split(":", buildTime)[1],
+		))
+		os.Exit(0)
+	}
 
 	if *help {
 		usage()
