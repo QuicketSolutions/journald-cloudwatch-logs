@@ -13,7 +13,7 @@ type State struct {
 
 func OpenState(fn string) (State, error) {
 	s := State{}
-	f, err := os.OpenFile(fn, os.O_RDWR|os.O_CREATE, 0700)
+	f, err := os.OpenFile(fn, os.O_RDWR|os.O_CREATE, 0600)
 	if err != nil {
 		return s, err
 	}

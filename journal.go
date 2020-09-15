@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/coreos/go-systemd/v22/sdjournal"
 	"strconv"
+	"strings"
 )
 
 func AddLogFilters(journal *sdjournal.Journal, config *Config) {
@@ -16,5 +17,22 @@ func AddLogFilters(journal *sdjournal.Journal, config *Config) {
 			}
 		}
 		journal.AddDisjunction()
+	}
+
+	// Add unit filter (multiple values possible, separate by ",")
+	if config.LogUnit != "" {
+		unitsRaw := strings.Split(config.LogUnit, ",")
+
+		for _, unitR := range unitsRaw {
+			unit := strings.TrimSpace(unitR)
+			if unit != "" {
+				if !strings.HasSuffix(unit, ".service") {
+					unit += ".service"
+				}
+				journal.AddMatch("_SYSTEMD_UNIT=" + unit)
+				journal.AddDisjunction()
+			}
+		}
+
 	}
 }
