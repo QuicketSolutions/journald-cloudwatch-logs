@@ -1,2 +1,5 @@
 # Ignore any binaries
 journald-cloudwatch-logs*
+
+.idea
+.github
