@@ -22,6 +22,7 @@ func ReadRecords(instanceId string, journal *sdjournal.Journal, c chan<- Record,
 		}
 	}
 
+	var lastRecTime time.Time
 	for {
 		if checkTerminate() {
 			return
@@ -38,7 +39,19 @@ func ReadRecords(instanceId string, journal *sdjournal.Journal, c chan<- Record,
 			skip--
 		} else {
 			record.InstanceId = instanceId
-			c <- *record
+			recTimeNS := int64(record.TimeUsec) * int64(time.Microsecond)
+			recTime := time.Unix(recTimeNS / int64(time.Second), recTimeNS % int64(time.Second))
+			// Skip records that are more than 14 days old. CWL will not accept them
+			if !recTime.Before(time.Now().AddDate(0,0,-14)) {
+				// CWL doesn't allow batches with timestamps more than
+				// 24 hours apart.
+				if recTime.After(lastRecTime.Add(24 * time.Hour)) {
+					// Sleep to cause the batch to flush
+					time.Sleep(2 * time.Second)
+				}
+				c <- *record
+				lastRecTime = recTime
+			}
 		}
 
 		for {

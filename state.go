@@ -2,10 +2,11 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 )
 
-const stateFormat = "%s\n%s\n"
+const stateFormat = "%s\n%s\n%d\n"
 
 type State struct {
 	file *os.File
@@ -29,26 +30,28 @@ func (s State) Sync() error {
 	return s.file.Sync()
 }
 
-func (s State) LastState() (string, string) {
+func (s State) LastState() (string, string, uint64) {
 	var bootId string
 	var seqToken string
+	var lastEventTime uint64
+
 	_, err := s.file.Seek(0, 0)
 	if err != nil {
-		return "", ""
+		return "", "", 0
 	}
-	n, err := fmt.Fscanf(s.file, stateFormat, &bootId, &seqToken)
-	if err != nil || n < 2 {
-		return "", ""
+	_, err = fmt.Fscanf(s.file, stateFormat, &bootId, &seqToken, &lastEventTime)
+	if err != nil && err != io.EOF  {
+		return "", "", 0
 	}
-	return bootId, seqToken
+	return bootId, seqToken, lastEventTime
 }
 
-func (s State) SetState(bootId, seqToken string) error {
+func (s State) SetState(bootId, seqToken string, lastTime uint64) error {
 	_, err := s.file.Seek(0, 0)
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(s.file, stateFormat, bootId, seqToken)
+	_, err = fmt.Fprintf(s.file, stateFormat, bootId, seqToken, lastTime)
 	if err != nil {
 		return err
 	}

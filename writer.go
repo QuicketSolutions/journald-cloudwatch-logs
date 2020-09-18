@@ -30,13 +30,14 @@ func NewWriter(sess *awsSession.Session, logGroupName, logStreamName, firstSeqTo
 	}, nil
 }
 
-func (w *Writer) WriteBatch(records []Record) (string, error) {
+func (w *Writer) WriteBatch(records []Record) (string, uint64, error) {
 
+	var lastEntryTime uint64
 	events := make([]*cloudwatchlogs.InputLogEvent, 0, len(records))
 	for _, record := range records {
 		jsonDataBytes, err := json.MarshalIndent(record, "", "  ")
 		if err != nil {
-			return "", err
+			return "", 0, err
 		}
 		jsonData := string(jsonDataBytes)
 
@@ -44,6 +45,7 @@ func (w *Writer) WriteBatch(records []Record) (string, error) {
 			Message:   aws.String(jsonData),
 			Timestamp: aws.Int64(record.TimeUsec / 1e3),
 		})
+		lastEntryTime = uint64(record.TimeUsec)
 	}
 
 	putEvents := func() error {
@@ -58,6 +60,9 @@ func (w *Writer) WriteBatch(records []Record) (string, error) {
 		result, err := w.conn.PutLogEvents(request)
 		if err != nil {
 			return err
+		}
+		if result.NextSequenceToken == nil {
+			return nil
 		}
 		w.nextSequenceToken = *result.NextSequenceToken
 		return nil
@@ -91,25 +96,25 @@ func (w *Writer) WriteBatch(records []Record) (string, error) {
 				if err != nil {
 					if awsErr, ok := err.(awserr.Error); ok {
 						if awsErr.Code() != "ResourceAlreadyExistsException" {
-							return "", fmt.Errorf("failed to create group: %s", err)
+							return "", 0, fmt.Errorf("failed to create group: %s", err)
 						}
 					}
 				}
 
 				err = createStream()
 				if err != nil {
-					return "", fmt.Errorf("failed to create stream: %s", err)
+					return "", 0, fmt.Errorf("failed to create stream: %s", err)
 				}
 
 				err = putEvents()
 				if err != nil {
-					return "", fmt.Errorf("failed to put events: %s", err)
+					return "", 0, fmt.Errorf("failed to put events: %s", err)
 				}
-				return w.nextSequenceToken, nil
+				return w.nextSequenceToken, lastEntryTime, nil
 			}
 			if awsErr.Code() == "DataAlreadyAcceptedException" {
 				// This batch was already sent
-				return "", nil
+				return "", 0, nil
 			}
 			if awsErr.Code() == "InvalidSequenceTokenException" {
 				request := &cloudwatchlogs.DescribeLogStreamsInput{
@@ -120,26 +125,26 @@ func (w *Writer) WriteBatch(records []Record) (string, error) {
 				}
 				result, err := w.conn.DescribeLogStreams(request)
 				if err != nil {
-					return "", fmt.Errorf("failed to get next sequence token: %s", err)
+					return "", 0, fmt.Errorf("failed to get next sequence token: %s", err)
 				}
 
 				w.nextSequenceToken = *(result.LogStreams[0].UploadSequenceToken)
 
 				err = putEvents()
 				if err != nil {
-					return "", fmt.Errorf("failed to put events: %s", err)
+					return "", 0, fmt.Errorf("failed to put events: %s", err)
 				}
-				return w.nextSequenceToken, nil
+				return w.nextSequenceToken, lastEntryTime, nil
 			}
 			if awsErr.Code() == "InvalidParameterException" {
 				if strings.HasPrefix(awsErr.Message(), "Log event too large") {
 					log.Println(fmt.Errorf("oversized log event: %s", err))
-					return w.nextSequenceToken, nil
+					return w.nextSequenceToken, lastEntryTime, nil
 				}
 			}
 		}
-		return "", fmt.Errorf("failed to put events: %s", err)
+		return "", 0, fmt.Errorf("failed to put events: %s", err)
 	}
 
-	return w.nextSequenceToken, nil
+	return w.nextSequenceToken, lastEntryTime, nil
 }
