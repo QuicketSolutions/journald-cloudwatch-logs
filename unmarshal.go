@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"reflect"
 	"strconv"
-	"strings"
 
 	"github.com/coreos/go-systemd/v22/sdjournal"
 )
@@ -51,8 +50,11 @@ func unmarshalRecord(entry *sdjournal.JournalEntry, toVal reflect.Value) error {
 		}
 
 		if fieldType.Name() == "RawMessage" {
-			if !strings.HasPrefix(value, `{"`) {
-				jenc, _ := json.Marshal(value)
+			if !json.Valid([]byte(value)) {
+				jenc, err := json.Marshal(value)
+				if err != nil {
+					return err
+				}
 				value = string(jenc)
 			}
 			fieldVal.SetBytes(json.RawMessage(value))
